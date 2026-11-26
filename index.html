@@ -61,6 +61,17 @@
   .modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
   .modal .box { background: #fff; border-radius: 12px; padding: 20px; max-width: 480px; width: 100%; }
   footer { text-align: center; color: #456; font-size: 13px; padding: 18px 0 26px; }
+  /* ---- pengaman anti-screenshot ----
+     Jujur: screenshot adalah fungsi sistem (OS) sehingga tidak ada halaman web
+     yang bisa memblokirnya sepenuhnya. Yang dipasang di sini adalah deterrent
+     + deteksi + ketertelusuran, bukan pemblokiran mutlak. */
+  #view-soal { -webkit-user-select: none; user-select: none; }
+  #watermark { position: fixed; inset: -25% -25%; z-index: 40; pointer-events: none; overflow: hidden;
+    transform: rotate(-28deg); opacity: .07; font-size: 20px; font-weight: 700; color: #0a5ea3; line-height: 3.2; }
+  #overlay-away { position: fixed; inset: 0; background: rgba(8,38,66,.94); color: #fff; z-index: 100;
+    display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; }
+  #overlay-away h2 { margin: 0 0 10px; font-size: 22px; }
+  #overlay-away p { margin: 6px 0; font-size: 16px; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -89,6 +100,7 @@
     <button class="btn ghost" id="btn-unduh-soal">📄 Unduh Soal (DOCX)</button>
   </div>
   <div class="note">Gunakan nilai π sesuai yang tertulis pada setiap soal (π = 22/7 atau 3,14). Bagian A: pilih satu jawaban. Bagian B: tentukan Benar/Salah tiap pernyataan. Bagian C: pilih semua jawaban yang benar (dua atau tiga jawaban).</div>
+  <div class="note">Selama mengerjakan, nama dan kelas Anda tampil samar pada soal (watermark). Jika Anda pindah tab atau aplikasi lain, soal akan disembunyikan dan kejadian itu tercatat untuk guru. Screenshot tidak dapat dicegah sepenuhnya oleh halaman web, tetapi tangkapan layar yang tersebar dapat dilacak dari watermark tersebut.</div>
   <div style="margin-top:14px; border-top:1px solid #d5e8fa; padding-top:12px">
     <button class="btn ghost small" id="btn-token-awal">🔑 Pembahasan (Guru)</button>
     <span class="muted"> &mdash; hanya untuk guru, dibuka dengan token setelah semua siswa selesai mengerjakan.</span>
@@ -97,6 +109,7 @@
 
 <!-- ============ SOAL ============ -->
 <div class="card hidden" id="view-soal">
+  <div id="watermark" aria-hidden="true"></div>
   <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
     <div><b id="soal-ident"></b></div>
     <div class="timer" id="soal-timer">⏱️ 80:00</div>
@@ -128,7 +141,7 @@
   <h3>Daftar Semua Siswa yang Mengerjakan</h3>
   <div class="muted" id="daftar-status">Memuat daftar…</div>
   <div class="scrollx"><table class="rekap" id="tabel-siswa">
-    <thead><tr><th>No</th><th>Nama</th><th>Kelas</th><th>Absen</th><th>Sekolah</th><th>Skor</th><th>Nilai</th><th>Waktu</th></tr></thead>
+    <thead><tr><th>No</th><th>Nama</th><th>Kelas</th><th>Absen</th><th>Sekolah</th><th>Skor</th><th>Nilai</th><th>Pindah Tab</th><th>Waktu</th></tr></thead>
     <tbody></tbody>
   </table></div>
   <div style="margin-top:14px">
@@ -153,6 +166,16 @@
 </div>
 
 <footer>Dikembangkan oleh Abid Khoirul Ismail, S.Pd &bull; SMP Negeri 4 Ungaran</footer>
+</div>
+
+<!-- overlay soal disembunyikan saat halaman ditinggalkan -->
+<div id="overlay-away" class="hidden">
+  <div>
+    <h2>Soal Disembunyikan</h2>
+    <p>Soal disembunyikan — Anda meninggalkan halaman ujian. Kembali untuk melanjutkan.</p>
+    <p style="color:#cfe4fa">Kejadian ini tercatat dan terlihat oleh guru. Jumlah kejadian tercatat: <b id="away-hitung">0</b></p>
+    <p style="color:#cfe4fa">Kembali ke tab ujian ini untuk melanjutkan mengerjakan.</p>
+  </div>
 </div>
 
 <!-- modal selesai -->
@@ -185,15 +208,67 @@ var HURUF = ["A","B","C","D"];
 var TIPE_LABEL = { pg:"Bagian A — Pilihan Ganda", tf:"Bagian B — Benar / Salah", mcma:"Bagian C — Pilihan Ganda Kompleks" };
 var state = { nama:"", kelas:"", absen:"", sekolah:"", jawaban:{}, ragu:{}, idx:0,
   timerId:null, sisaDetik:DURASI_MENIT*60, selesai:false, hasil:null, tokenOk:false,
-  barisSaya:null, daftarTerakhir:[], viewTerakhir:"view-identitas" };
+  barisSaya:null, daftarTerakhir:[], viewTerakhir:"view-identitas",
+  pindah:0, sedangAway:false, abaikanAway:false };
 
 function showView(id){
   ["view-identitas","view-soal","view-hasil","view-pembahasan"].forEach(function(v){
     document.getElementById(v).classList.toggle("hidden", v!==id);
   });
+  document.getElementById("overlay-away").classList.add("hidden");
+  state.sedangAway = false;
   state.viewTerakhir = id;
   window.scrollTo(0,0);
 }
+
+/* ---------- pengaman anti-screenshot ----------
+   Jujur: screenshot adalah fungsi sistem (OS) sehingga tidak ada halaman web
+   yang bisa memblokirnya sepenuhnya. Yang dipasang di sini adalah deterrent
+   + deteksi + ketertelusuran: watermark nama siswa, soal disembunyikan saat
+   halaman ditinggalkan, salin/klik-kanan dimatikan, dan hitungan pelanggaran
+   tercatat lalu dikirim bersama hasil. */
+function isiWatermark(){
+  var wm = document.getElementById("watermark");
+  var teks = esc(state.nama + " • " + state.kelas);
+  var baris = "";
+  for(var i=0;i<24;i++) baris += teks + "&nbsp;&nbsp;&nbsp;";
+  var isi = "";
+  for(var r=0;r<10;r++) isi += "<div>" + baris + "</div>";
+  wm.innerHTML = isi;
+}
+function sedangUjian(){
+  return !state.selesai && !document.getElementById("view-soal").classList.contains("hidden");
+}
+function catatAway(){
+  if(!sedangUjian() || state.abaikanAway || state.sedangAway) return;
+  state.sedangAway = true;
+  state.pindah++;
+  document.getElementById("away-hitung").textContent = state.pindah;
+  document.getElementById("overlay-away").classList.remove("hidden");
+}
+function kembaliFokus(){
+  if(!state.sedangAway) return;
+  state.sedangAway = false;
+  document.getElementById("overlay-away").classList.add("hidden");
+}
+document.addEventListener("visibilitychange", function(){
+  if(document.hidden) catatAway(); else kembaliFokus();
+});
+window.addEventListener("blur", catatAway);
+window.addEventListener("focus", kembaliFokus);
+document.addEventListener("keydown", function(e){
+  if((e.key === "PrintScreen" || e.keyCode === 44) && sedangUjian() && !state.abaikanAway){
+    state.pindah++;
+    document.getElementById("away-hitung").textContent = state.pindah;
+    var ov = document.getElementById("overlay-away");
+    ov.classList.remove("hidden");
+    setTimeout(function(){ if(!state.sedangAway) ov.classList.add("hidden"); }, 1500);
+  }
+});
+/* klik kanan, blok/seleksi, salin & potong dimatikan di area soal */
+["contextmenu","selectstart","copy","cut"].forEach(function(ev){
+  document.getElementById("view-soal").addEventListener(ev, function(e){ e.preventDefault(); });
+});
 
 /* ---------- unduh soal (DOCX, tanpa kunci) ---------- */
 if(!DOCX_SOAL_B64) document.getElementById("btn-unduh-soal").style.display = "none";
@@ -272,6 +347,8 @@ document.getElementById("btn-mulai").addEventListener("click", function(){
   }
   err.classList.add("hidden");
   state.nama = nama; state.kelas = kelas; state.absen = absen; state.sekolah = sekolah;
+  state.pindah = 0; state.sedangAway = false; state.abaikanAway = false;
+  isiWatermark();
   QUESTIONS = siapkanSoalAcak(); /* urutan soal & kunci diacak setiap kali mulai */
   state.jawaban = {}; state.ragu = {}; state.idx = 0; state.selesai = false;
   document.getElementById("soal-ident").textContent = nama + " • " + kelas + " • Absen " + absen;
@@ -378,7 +455,7 @@ function startTimer(){
     state.sisaDetik--;
     el.textContent = "⏱️ " + fmtWaktu(Math.max(0, state.sisaDetik));
     if(state.sisaDetik<=300) el.classList.add("kritis");
-    if(state.sisaDetik<=0){ clearInterval(state.timerId); alert("Waktu habis. Asesmen dikumpulkan otomatis."); doFinish(true); }
+    if(state.sisaDetik<=0){ clearInterval(state.timerId); state.abaikanAway = true; alert("Waktu habis. Asesmen dikumpulkan otomatis."); doFinish(true); }
   }, 1000);
 }
 
@@ -456,7 +533,7 @@ function bacaLokal(){
 function kirimHasil(skor){
   var baris = { waktu: new Date().toISOString(), nama: state.nama, kelas: state.kelas,
     absen: state.absen, sekolah: state.sekolah, pg: skor.pg, tf: skor.tf, mcma: skor.mcma,
-    total: skor.total, nilai: skor.nilai };
+    total: skor.total, nilai: skor.nilai, pindah: state.pindah };
   state.barisSaya = baris;
   if(ENDPOINT_URL && typeof fetch === "function"){
     fetch(ENDPOINT_URL, { method:"POST", headers:{ "Content-Type":"text/plain" },
@@ -497,7 +574,7 @@ function renderDaftar(rows){
     if(saya) tr.className = "saya";
     var w = r.waktu ? new Date(r.waktu) : null;
     var wStr = w && !isNaN(w) ? w.toLocaleString("id-ID", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) : "";
-    [i+1, r.nama, r.kelas, r.absen, r.sekolah, r.total, r.nilai, wStr].forEach(function(v){
+    [i+1, r.nama, r.kelas, r.absen, r.sekolah, r.total, r.nilai, (r.pindah==null?"":r.pindah), wStr].forEach(function(v){
       var td = document.createElement("td"); td.textContent = v==null?"":v; tr.appendChild(td);
     });
     tb.appendChild(tr);
@@ -505,7 +582,7 @@ function renderDaftar(rows){
   if(!data.length){
     var tr = document.createElement("tr");
     var td = document.createElement("td");
-    td.colSpan = 8; td.textContent = "Belum ada siswa yang mengerjakan.";
+    td.colSpan = 9; td.textContent = "Belum ada siswa yang mengerjakan.";
     tr.appendChild(td); tb.appendChild(tr);
   }
 }
@@ -557,7 +634,7 @@ function zipStore(files){ /* files: [{name, data: string}] -> Uint8Array (tanpa 
   return out;
 }
 function buatXlsxRekap(rows){
-  var HEAD = ["No","Nama","Kelas","Absen","Sekolah","Skor PG","Skor B/S","Skor MCMA","Skor Total","Nilai","Waktu"];
+  var HEAD = ["No","Nama","Kelas","Absen","Sekolah","Skor PG","Skor B/S","Skor MCMA","Skor Total","Nilai","Pindah Tab","Waktu"];
   var baris = '<row r="1">' + HEAD.map(function(h, i){
     return '<c r="' + hurufKol(i) + '1" s="1" t="inlineStr"><is><t>' + xmlEsc(h) + '</t></is></c>';
   }).join("") + '</row>';
@@ -568,6 +645,7 @@ function buatXlsxRekap(rows){
       { v: r.nama }, { v: r.kelas }, { v: r.absen }, { v: r.sekolah },
       { v: r.pg, num: true }, { v: r.tf, num: true }, { v: r.mcma, num: true },
       { v: r.total, num: true }, { v: r.nilai, num: true },
+      { v: (r.pindah==null||r.pindah==="") ? "" : r.pindah, num: (r.pindah!=null && r.pindah!=="") },
       { v: r.waktu ? new Date(r.waktu).toLocaleString("id-ID", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" }) : "" }
     ];
     baris += '<row r="' + n + '">' + sel.map(function(c, i){
@@ -580,7 +658,7 @@ function buatXlsxRekap(rows){
     + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
     + '<cols><col min="1" max="1" width="5"/><col min="2" max="2" width="28"/>'
     + '<col min="3" max="3" width="10"/><col min="4" max="4" width="9"/><col min="5" max="5" width="26"/>'
-    + '<col min="6" max="9" width="11"/><col min="10" max="10" width="9"/><col min="11" max="11" width="20"/></cols>'
+    + '<col min="6" max="9" width="11"/><col min="10" max="10" width="9"/><col min="11" max="11" width="11"/><col min="12" max="12" width="20"/></cols>'
     + '<sheetData>' + baris + '</sheetData></worksheet>';
   return zipStore([
     { name: "[Content_Types].xml", data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -628,6 +706,8 @@ document.getElementById("btn-unduh").addEventListener("click", function(){
 document.getElementById("btn-ulang").addEventListener("click", function(){
   state.jawaban = {}; state.ragu = {}; state.idx = 0; state.selesai = false;
   state.sisaDetik = DURASI_MENIT*60; state.hasil = null; state.barisSaya = null;
+  state.pindah = 0; state.sedangAway = false; state.abaikanAway = false;
+  document.getElementById("overlay-away").classList.add("hidden");
   document.getElementById("soal-timer").classList.remove("kritis");
   showView("view-identitas");
 });
